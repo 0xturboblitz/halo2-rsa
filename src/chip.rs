@@ -764,6 +764,57 @@ mod test {
         }
     );
 
+    // our test
+    impl_rsa_signature_test_circuit!(
+        TestRSASignatureFromPassportCircuit,
+        test_rsa_signature_from_passport_circuit,
+        2048,
+        64,
+        13,
+        false,
+        fn synthesize(
+            &self,
+            config: Self::Config,
+            mut layouter: impl Layouter<F>,
+        ) -> Result<(), Error> {
+            config.range().load_lookup_table(&mut layouter)?;
+            let mut first_pass = SKIP_FIRST_PASS;
+            layouter.assign_region(
+                || "random rsa modpow test with 2048 bits public keys",
+                |region| {
+                    if first_pass {
+                        first_pass = false;
+                        return Ok(());
+                    }
+
+                    let mut aux = config.new_context(region);
+                    let ctx = &mut aux;
+                    let e_fix = RSAPubE::Fix(BigUint::from(Self::DEFAULT_E));
+                    let n_big = BigUint::from_str("28159883352674882379057769986480568362451772038776968585004981578225278693333547799102130894763405432587915062082465148496474234575326105385821759136009545779818222153233133035879793115174362760842019209694080335094106992594750768845203453730838752915512153732497843616618793848301960760149638047510008343360196880685663479558178763682016378217247163810196893987406871499561685670874108707284107075831225850508689339986430051452676316285408792544552423732572641619762668633933359140892474838724513811145157680654041371778117922705097996064897405260161239587206924594751637153123036795597697983924175089749292396161441").unwrap();
+                    let public_key = RSAPublicKey::new(Value::known(n_big), e_fix);
+                    let public_key = config.assign_public_key(ctx, public_key)?;
+                    let sign_big = BigUint::from_str("11421002704440838275758104327703219541694143116443588846473971828134487778844684016221045000128421608760663340136706444770533262842224739724790388577861540759248537724228224325826320008026191292927005002194505413540686070846094289808101544462606878681304564711193776960609022832005967163535658828500127030008271205944006367664936507626289241791511913991862417840852461435811537561476559374106251314455102000594960007561777666754199130606872360270853397399211975651186846229644803018232027055655342984015001315397892430118157830024480757997489988388269475398463434333251401882239955420063768498533807664027784037561622").unwrap();
+                    let sign = RSASignature::new(Value::known(sign_big));
+                    let sign = config.assign_signature(ctx, sign)?;
+                    let hashed_msg_big = BigUint::from_str("68047946378308475289293787357717828552636626916964367437434418622917273241319").unwrap();
+                    let hashed_msg_limbs = decompose_biguint::<F>(&hashed_msg_big, 4, 256/4);
+                    let hashed_msg_assigned = hashed_msg_limbs.into_iter().map(|limb| config.gate().load_witness(ctx, Value::known(limb))).collect::<Vec<AssignedValue<F>>>();
+                    let is_valid = config.verify_pkcs1v15_signature(ctx, &public_key, &hashed_msg_assigned, &sign)?;
+                    config.gate().assert_is_const(ctx, &is_valid, F::one());
+                    config.range().finalize(ctx);
+                    {
+                        println!("total advice cells: {}", ctx.total_advice);
+                        let const_rows = ctx.total_fixed + 1;
+                        println!("maximum rows used by a fixed column: {const_rows}");
+                        println!("lookup cells used: {}", ctx.cells_to_lookup.len());
+                    }
+                    Ok(())
+                },
+            )?;
+            Ok(())
+        }
+    );
+
     impl_rsa_signature_test_circuit!(
         TestBadRSASignatureCircuit,
         test_bad_rsa_signature_circuit,
